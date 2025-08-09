@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hogwarts Story Player (No‑Code)</title>
+<style>
+  :root { --bg: #0b0b10; --panel: rgba(15,18,24,.82); --text: #eef2ff; --accent:#bba35b;}
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji"; background: var(--bg); color: var(--text); }
+  .app { position: relative; min-height: 100%; }
+  .bg {
+    position: fixed; inset: 0;
+    background: #000 center/cover no-repeat;
+    filter: brightness(.9) saturate(1.05);
+    transition: background-image .6s ease, filter .4s ease;
+  }
+  .overlay { position: fixed; inset:0; background: radial-gradient(ellipse at center, rgba(0,0,0,.05), rgba(0,0,0,.55)); pointer-events:none; }
+  .panel {
+    position: relative; z-index: 2; max-width: 900px; margin: 24px auto; padding: 16px;
+    background: var(--panel); border: 1px solid rgba(255,255,255,.1); border-radius: 14px; backdrop-filter: blur(4px);
+  }
+  h1 { font-size: 22px; margin: 0 0 10px; color: var(--accent); letter-spacing:.4px; }
+  textarea { width: 100%; min-height: 140px; resize: vertical; padding:12px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background:#0e1116; color:var(--text); }
+  .row { display:flex; gap:12px; flex-wrap: wrap; align-items: center; margin-top: 10px;}
+  .row > * { flex: 1 1 auto; }
+  label { opacity:.9; font-size: 13px; }
+  select, input[type=text] {
+    width: 100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background:#0e1116; color:var(--text);
+  }
+  button {
+    appearance:none; border:none; padding:10px 14px; border-radius:10px; background: var(--accent); color:#141414; font-weight: 700; letter-spacing:.2px; cursor:pointer;
+    transition: transform .03s ease, filter .2s ease;
+  }
+  button:active { transform: translateY(1px) }
+  .story {
+    white-space: pre-wrap; line-height: 1.6; font-size: 16px; margin-top: 12px; padding: 12px;
+    background: rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.08); border-radius:10px;
+  }
+  .foot { opacity:.8; font-size:12px; margin-top:8px; }
+  .pill { display:inline-block; padding:.2rem .55rem; border:1px solid rgba(255,255,255,.2); border-radius:999px; background: rgba(255,255,255,.08); }
+</style>
+</head>
+<body>
+<div class="app">
+  <div id="bg" class="bg"></div>
+  <div class="overlay"></div>
+
+  <div class="panel">
+    <h1>Hogwarts Story Player (No‑Code)</h1>
+    <p>Paste your GPT scene below. Include tags like <span class="pill">[Location: Great Hall]</span> and <span class="pill">[Time: Night]</span>. The background and music will switch automatically using files in <code>/images</code> and <code>/music</code>.</p>
+
+    <textarea id="input" placeholder="Paste a scene here...
+[Location: Library]
+[Time: Evening]
+Your footsteps echo under the vaulted ceiling as lanterns warm the deep stacks..."></textarea>
+
+    <div class="row">
+      <div style="flex:2 1 260px">
+        <label>Detected Location</label>
+        <input id="loc" type="text" placeholder="Great Hall" />
+      </div>
+      <div style="flex:1 1 160px">
+        <label>Detected Time</label>
+        <select id="tod">
+          <option>Morning</option>
+          <option>Midday</option>
+          <option>Afternoon</option>
+          <option>Evening</option>
+          <option>Night</option>
+          <option>Dawn</option>
+          <option>Dusk</option>
+          <option>FullMoon</option>
+          <option>Stormy</option>
+          <option>Rain</option>
+          <option>Cloudy</option>
+          <option>Sunny</option>
+        </select>
+      </div>
+      <div style="flex:0 0 auto">
+        <label>&nbsp;</label>
+        <button id="apply">Show Scene</button>
+      </div>
+      <div style="flex:0 0 auto">
+        <label>&nbsp;</label>
+        <button id="clear">Clear</button>
+      </div>
+    </div>
+
+    <div id="out" class="story"></div>
+    <div class="foot">File lookup rule: <code>/images/&lt;slug(location)&gt;_&lt;slug(time)&gt;.jpg</code> (or .png / .webp). Audio: <code>/music/&lt;slug(location)&gt;.mp3</code> if present.</div>
+  </div>
+</div>
+
+<audio id="bgm" loop></audio>
+
+<script>
+function slug(s){
+  return (s||'')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g,'-')
+    .replace(/(^-|-$)/g,'')
+    .replace(/-+/g,'-');
+}
+
+// Parse [Location: ___] and [Time: ___]
+function parseTags(text){
+  const locMatch = text.match(/\[\s*Location\s*:\s*([^\]]+)\]/i);
+  const timeMatch = text.match(/\[\s*Time\s*:\s*([^\]]+)\]/i);
+  return {
+    location: locMatch ? locMatch[1].trim() : '',
+    time: timeMatch ? timeMatch[1].trim() : ''
+  };
+}
+
+function applyScene(location, time){
+  const bgEl = document.getElementById('bg');
+  const audio = document.getElementById('bgm');
+  const locSlug = slug(location);
+  const timeSlug = slug(time);
+
+  // Background lookup with graceful fallbacks
+  const candidates = [
+    `/images/${locSlug}_${timeSlug}.jpg`,
+    `/images/${locSlug}_${timeSlug}.png`,
+    `/images/${locSlug}_${timeSlug}.webp`,
+    `/images/${locSlug}.jpg`,
+    `/images/${locSlug}.png`,
+    `/images/${locSlug}.webp`,
+  ];
+
+  // Test images in order, pick first that exists
+  (async () => {
+    for (const url of candidates){
+      const ok = await fetch(url, {method:'HEAD'}).then(r=>r.ok).catch(()=>false);
+      if (ok){ bgEl.style.backgroundImage = `url(${url})`; bgEl.style.filter = 'brightness(.9) saturate(1.05)'; return; }
+    }
+    // If none found, dim the bg
+    bgEl.style.backgroundImage = '';
+    bgEl.style.filter = 'brightness(.6)';
+  })();
+
+  // Music: try /music/<location>.mp3 if present
+  const musicUrl = `/music/${locSlug}.mp3`;
+  fetch(musicUrl, {method:'HEAD'}).then(r=>{
+    if (r.ok){
+      if (audio.src !== musicUrl) { audio.src = musicUrl; }
+      audio.volume = 0.35;
+      audio.play().catch(()=>{});
+    } else {
+      audio.pause();
+    }
+  }).catch(()=> audio.pause());
+}
+
+document.getElementById('apply').addEventListener('click', () => {
+  const raw = document.getElementById('input').value;
+  const { location, time } = parseTags(raw);
+  const locField = document.getElementById('loc');
+  const todField = document.getElementById('tod');
+  if (location) locField.value = location;
+  if (time) todField.value = time;
+
+  applyScene(locField.value || location || 'Great Hall', todField.value || time || 'Evening');
+  document.getElementById('out').textContent = raw.trim();
+});
+
+document.getElementById('clear').addEventListener('click', () => {
+  document.getElementById('input').value = '';
+  document.getElementById('out').textContent = '';
+});
+
+// When user edits the detected fields, allow instant update
+['loc','tod'].forEach(id=>{
+  document.getElementById(id).addEventListener('change', () => {
+    applyScene(document.getElementById('loc').value, document.getElementById('tod').value);
+  });
+});
+
+// Demo default scene on load
+applyScene('Great Hall','Morning');
+</script>
+</body>
+</html>
