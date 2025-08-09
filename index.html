@@ -178,6 +178,44 @@ document.getElementById('clear').addEventListener('click', () => {
 });
 
 // Demo default scene on load
+<!-- AUTO MODE: fetch scenes from your Vercel API -->
+<script>
+const ENDPOINT = "/api/next-scene";
+let autoTimer = null;
+
+async function fetchNextScene(userInput = "") {
+  try {
+    const r = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userInput })
+    });
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || "API error");
+    document.getElementById("out").textContent = data.text;
+
+    const locField = document.getElementById("loc");
+    const todField = document.getElementById("tod");
+    if (data.location) locField.value = data.location;
+    if (data.time) todField.value = data.time;
+    applyScene(locField.value || data.location || "Great Hall",
+               todField.value || data.time || "Evening");
+  } catch (err) { console.error(err); }
+}
+
+window.startAuto = function(){
+  if (autoTimer) return;
+  fetchNextScene();                // get one immediately
+  autoTimer = setInterval(() => {  // then keep going
+    fetchNextScene("Continue.");
+  }, 15000); // every 15s (change if you like)
+};
+window.stopAuto = function(){
+  if (autoTimer) clearInterval(autoTimer);
+  autoTimer = null;
+};
+</script>
+
 applyScene('Great Hall','Morning');
 </script>
 </body>
