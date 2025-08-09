@@ -1,0 +1,50 @@
+// api/next-scene.js — Vercel Serverless Function (no SDK needed)
+export default async function handler(req, res) {
+  try {
+    if (req.method !== "POST") return res.status(405).json({ ok:false, error:"Use POST" });
+    const { userInput = "" } = req.body || {};
+
+    const system = `
+You are a Hogwarts story simulator. Always put a tag line FIRST:
+[Location: <place>] [Time: <period>]
+Then write the scene on following lines. Keep tags on their own line.
+Keep lore-consistent, avoid omniscience, and only let characters know what they'd truly know.
+`;
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",   // use your preferred model
+        temperature: 0.9,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: userInput || "Continue the story." }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const t = await response.text();
+      return res.status(500).json({ ok:false, error:`OpenAI error: ${t}` });
+    }
+
+    const json = await response.json();
+    const text = json?.choices?.[0]?.message?.content ?? "";
+
+    const locMatch = text.match(/\[\s*Location\s*:\s*([^\]]+)\]/i);
+    const timeMatch = text.match(/\[\s*Time\s*:\s*([^\]]+)\]/i);
+
+    res.status(200).json({
+      ok: true,
+      text,
+      location: locMatch ? locMatch[1].trim() : "",
+      time: timeMatch ? timeMatch[1].trim() : ""
+    });
+  } catch (e) {
+    res.status(500).json({ ok:false, error: String(e) });
+  }
+}
