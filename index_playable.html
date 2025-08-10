@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hogwarts Story Player (No‑Code) — Playable</title>
+<style>
+  :root { --bg: #0b0b10; --panel: rgba(15,18,24,.82); --text: #eef2ff; --accent:#bba35b;}
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji"; background: var(--bg); color: var(--text); }
+  .app { position: relative; min-height: 100%; }
+  .bg {
+    position: fixed; inset: 0;
+    background: #000 center/cover no-repeat;
+    filter: brightness(.9) saturate(1.05);
+    transition: background-image .6s ease, filter .4s ease;
+  }
+  .overlay { position: fixed; inset:0; background: radial-gradient(ellipse at center, rgba(0,0,0,.05), rgba(0,0,0,.55)); pointer-events:none; }
+  .panel {
+    position: relative; z-index: 2; max-width: 980px; margin: 24px auto; padding: 16px;
+    background: var(--panel); border: 1px solid rgba(255,255,255,.1); border-radius: 14px; backdrop-filter: blur(4px);
+  }
+  h1 { font-size: 22px; margin: 0 0 10px; color: var(--accent); letter-spacing:.4px; }
+  .row { display:flex; gap:12px; flex-wrap: wrap; align-items: center; margin-top: 10px;}
+  .row > * { flex: 1 1 auto; }
+  textarea, input[type=text] {
+    width: 100%; padding:12px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background:#0e1116; color:var(--text);
+  }
+  textarea { min-height: 110px; resize: vertical; }
+  select {
+    width: 100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background:#0e1116; color:var(--text);
+  }
+  button {
+    appearance:none; border:none; padding:10px 14px; border-radius:10px; background: var(--accent); color:#141414; font-weight: 700; letter-spacing:.2px; cursor:pointer;
+    transition: transform .03s ease, filter .2s ease;
+  }
+  button:active { transform: translateY(1px) }
+  .storylog {
+    white-space: pre-wrap; line-height: 1.6; font-size: 16px; margin-top: 12px; padding: 12px;
+    background: rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.08); border-radius:10px; max-height: 45vh; overflow:auto;
+  }
+  .line { margin: 10px 0; }
+  .sys { opacity:.85; font-size:12px; }
+  .foot { opacity:.8; font-size:12px; margin-top:8px; }
+  .pill { display:inline-block; padding:.2rem .55rem; border:1px solid rgba(255,255,255,.2); border-radius:999px; background: rgba(255,255,255,.08); }
+  .controls { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div id="bg" class="bg"></div>
+  <div class="overlay"></div>
+
+  <div class="panel">
+    <h1>Hogwarts Story Player (No‑Code) — Playable</h1>
+    <p>Type your action or dialogue, or paste GPT text that includes tags like <span class="pill">[Location: Great Hall]</span> and <span class="pill">[Time: Night]</span>. The background and music will switch automatically using files in <code>/images</code> and <code>/music</code>.</p>
+
+    <div class="row">
+      <div style="flex:2 1 260px">
+        <label>Detected Location</label>
+        <input id="loc" type="text" placeholder="Great Hall" />
+      </div>
+      <div style="flex:1 1 160px">
+        <label>Detected Time</label>
+        <select id="tod">
+          <option>Morning</option>
+          <option>Midday</option>
+          <option>Afternoon</option>
+          <option>Evening</option>
+          <option>Night</option>
+          <option>Dawn</option>
+          <option>Dusk</option>
+          <option>FullMoon</option>
+          <option>Stormy</option>
+          <option>Rain</option>
+          <option>Cloudy</option>
+          <option>Sunny</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <textarea id="playerInput" placeholder="Type your action or paste a GPT scene here...&#10;Examples:&#10;[Location: Great Hall]&#10;[Time: Morning]&#10;I sit at the Gryffindor table and open the owl post."></textarea>
+    </div>
+
+    <div class="controls">
+      <button id="send">Send / Parse</button>
+      <button id="continue">Continue (API)</button>
+      <button id="startAuto">Start Auto</button>
+      <button id="stopAuto">Stop Auto</button>
+      <span class="sys" id="modeLabel"></span>
+    </div>
+
+    <div id="storylog" class="storylog"></div>
+
+    <div class="foot">File rule: <code>/images/&lt;slug(location)&gt;_&lt;slug(time)&gt;.(jpg|png|webp)</code>.  Audio: <code>/music/&lt;slug(location)&gt;.mp3</code>.  Fallback to <code>/images/&lt;slug(location)&gt;.*</code> if time-specific image not found.</div>
+  </div>
+</div>
+
+<audio id="bgm" loop></audio>
+
+<script>
+// ====== CONFIG ======
+const ENDPOINT = "/api/next-scene"; // Vercel function path if deployed
+const USE_API_DEFAULT = true;       // falls back to manual if API not reachable
+// ====================
+
+function slug(s){
+  return (s||'')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g,'-')
+    .replace(/(^-|-$)/g,'')
+    .replace(/-+/g,'-');
+}
+
+// Parse [Location: ___] and [Time: ___]
+function parseTags(text){
+  const locMatch = text.match(/\[\s*Location\s*:\s*([^\]]+)\]/i);
+  const timeMatch = text.match(/\[\s*Time\s*:\s*([^\]]+)\]/i);
+  return {
+    location: locMatch ? locMatch[1].trim() : '',
+    time: timeMatch ? timeMatch[1].trim() : ''
+  };
+}
+
+function logLine(text){
+  const el = document.createElement('div');
+  el.className = 'line';
+  el.textContent = text;
+  const box = document.getElementById('storylog');
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+}
+
+function applyScene(location, time){
+  const bgEl = document.getElementById('bg');
+  const audio = document.getElementById('bgm');
+  const locSlug = slug(location);
+  const timeSlug = slug(time);
+
+  const candidates = [
+    `/images/${locSlug}_${timeSlug}.jpg`,
+    `/images/${locSlug}_${timeSlug}.png`,
+    `/images/${locSlug}_${timeSlug}.webp`,
+    `/images/${locSlug}.jpg`,
+    `/images/${locSlug}.png`,
+    `/images/${locSlug}.webp`,
+  ];
+
+  (async () => {
+    for (const url of candidates){
+      const ok = await fetch(url, {method:'HEAD'}).then(r=>r.ok).catch(()=>false);
+      if (ok){ bgEl.style.backgroundImage = `url(${url})`; bgEl.style.filter = 'brightness(.9) saturate(1.05)'; return; }
+    }
+    bgEl.style.backgroundImage = '';
+    bgEl.style.filter = 'brightness(.6)';
+  })();
+
+  const musicUrl = `/music/${locSlug}.mp3`;
+  fetch(musicUrl, {method:'HEAD'}).then(r=>{
+    if (r.ok){
+      if (audio.src !== musicUrl) { audio.src = musicUrl; }
+      audio.volume = 0.35;
+      audio.play().catch(()=>{});
+    } else {
+      audio.pause();
+    }
+  }).catch(()=> audio.pause());
+}
+
+async function tryAPI(userInput){
+  try {
+    const r = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userInput })
+    });
+    if (!r.ok) throw new Error('API not reachable');
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || 'API error');
+    const { location, time } = data;
+    logLine(data.text);
+    const locField = document.getElementById('loc');
+    const todField = document.getElementById('tod');
+    if (location) locField.value = location;
+    if (time) todField.value = time;
+    applyScene(locField.value || location || 'Great Hall',
+               todField.value || time || 'Evening');
+    return true;
+  } catch (e) {
+    console.warn('API mode failed, falling back to manual parse:', e.message);
+    return false;
+  }
+}
+
+const modeLabel = document.getElementById('modeLabel');
+function setModeLabel(api){
+  modeLabel.textContent = api ? 'Mode: API (live)' : 'Mode: Manual (paste/parse)';
+}
+setModeLabel(USE_API_DEFAULT);
+
+document.getElementById('send').addEventListener('click', async () => {
+  const input = document.getElementById('playerInput').value.trim();
+  if (!input) return;
+  if (USE_API_DEFAULT) {
+    const ok = await tryAPI(input);
+    if (ok) { document.getElementById('playerInput').value = ''; return; }
+    setModeLabel(false);
+  }
+  const { location, time } = parseTags(input);
+  logLine(input);
+  const locField = document.getElementById('loc');
+  const todField = document.getElementById('tod');
+  if (location) locField.value = location;
+  if (time) todField.value = time;
+  applyScene(locField.value || location || 'Great Hall',
+             todField.value || time || 'Evening');
+  document.getElementById('playerInput').value = '';
+});
+
+document.getElementById('continue').addEventListener('click', async () => {
+  const ok = await tryAPI('Continue the story.');
+  if (!ok) setModeLabel(false);
+});
+
+let autoTimer = null;
+document.getElementById('startAuto').addEventListener('click', async () => {
+  const ok = await tryAPI('Continue the story.');
+  if (!ok) { setModeLabel(false); return; }
+  if (autoTimer) return;
+  autoTimer = setInterval(() => tryAPI('Continue.'), 15000);
+});
+document.getElementById('stopAuto').addEventListener('click', () => {
+  if (autoTimer) clearInterval(autoTimer);
+  autoTimer = null;
+});
+
+['loc','tod'].forEach(id=>{
+  document.getElementById(id).addEventListener('change', () => {
+    applyScene(document.getElementById('loc').value, document.getElementById('tod').value);
+  });
+});
+
+applyScene('Great Hall','Morning');
+logLine('[Location: Great Hall] [Time: Morning]\nYou step into the Great Hall as owls sweep overhead.');
+</script>
+</body>
+</html>
